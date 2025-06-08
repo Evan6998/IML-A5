@@ -2,6 +2,36 @@
 Rewritten solution, based on starter code given to students
 """
 
+"""
+(tokens)                 → (batch_size, 128)
+ → embeddings            → (batch_size, 128, embed_dim)
+ → RNN                   → (batch_size, 128, hidden_dim)
+ → Attention             → (batch_size, 128, hidden_dim)
+ → LM head (Linear)      → (batch_size, 128, vocab_size)
+ → CrossEntropyLoss
+
+ RNNLanguageModel(
+  (embeddings): Embedding(1024, 512)
+  (rnn): RNN(
+    (cell): RNNCell(
+      (i2h): Linear(in_features=512, out_features=512, bias=True)
+      (h2h): Linear(in_features=512, out_features=512, bias=True)
+      (activation): ReLU()
+    )
+    (out): Linear(in_features=512, out_features=512, bias=True)
+  )
+  (attention): SelfAttention(
+    (query_transform): Linear(in_features=512, out_features=256, bias=True)
+    (key_transform): Linear(in_features=512, out_features=256, bias=True)
+    (value_transform): Linear(in_features=512, out_features=256, bias=True)
+    (output_transform): Linear(in_features=256, out_features=512, bias=True)
+  )
+  (lm_head): Linear(in_features=512, out_features=1024, bias=True)
+)
+Number of Parameters:  2363136
+ 
+ """
+
 import torch
 from torch import nn, optim, Tensor
 from typing import Optional
@@ -17,7 +47,7 @@ torch.manual_seed(10601)
 device = (
     "cuda"
     if torch.cuda.is_available()
-    else "mps" if torch.backends.mps.is_available() else "cpu"
+    else "cpu"
 )
 
 # print(f"Using device: {device}")
