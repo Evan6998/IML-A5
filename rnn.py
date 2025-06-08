@@ -3,6 +3,7 @@ Rewritten solution, based on starter code given to students
 """
 
 """
+128 represents the number of token in each sequence.
 (tokens)                 → (batch_size, 128)
  → embeddings            → (batch_size, 128, embed_dim)
  → RNN                   → (batch_size, 128, hidden_dim)
@@ -10,7 +11,7 @@ Rewritten solution, based on starter code given to students
  → LM head (Linear)      → (batch_size, 128, vocab_size)
  → CrossEntropyLoss
 
- RNNLanguageModel(
+RNNLanguageModel(
   (embeddings): Embedding(1024, 512)
   (rnn): RNN(
     (cell): RNNCell(
@@ -29,8 +30,7 @@ Rewritten solution, based on starter code given to students
   (lm_head): Linear(in_features=512, out_features=1024, bias=True)
 )
 Number of Parameters:  2363136
- 
- """
+"""
 
 import torch
 from torch import nn, optim, Tensor
