@@ -49,8 +49,8 @@ class RNNCell(nn.Module):
         self.hidden_dim = hidden_dim
 
         # TODO: Initialize weights
-        self.i2h = ...
-        self.h2h = ...
+        self.i2h = nn.Linear(input_dim, hidden_dim)
+        self.h2h = nn.Linear(hidden_dim, hidden_dim)
 
         # See here for PyTorch activation functions
         # https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity
@@ -69,7 +69,7 @@ class RNNCell(nn.Module):
                 - shape: (batch_size, hidden_dim)
         """
         # TODO: fill this in
-        out = ...
+        out = self.activation(self.i2h(input) + self.h2h(hidden_state))
 
         return out
 
@@ -90,9 +90,9 @@ class SelfAttention(nn.Module):
         self.value_dim = value_dim
 
         # TODO: Initialize Query, Key, and Value transformations
-        self.query_transform = ...
-        self.key_transform = ...
-        self.value_transform = ...
+        self.query_transform = nn.Linear(hidden_dim, key_dim)
+        self.key_transform = nn.Linear(hidden_dim, key_dim)
+        self.value_transform = nn.Linear(hidden_dim, value_dim)
 
         # Output projection within the Attention Layer (NOT the LM head)
         self.output_transform = nn.Linear(value_dim, hidden_dim)
@@ -112,9 +112,9 @@ class SelfAttention(nn.Module):
         last_hidden_state = y_all[:, -1].unsqueeze(1)
 
         # TODO: Compute the QKV values
-        query = ...
-        keys = ...
-        values = ...
+        query = self.query_transform(last_hidden_state) # - shape (batch_size, 1, key_dim)
+        keys = self.key_transform(y_all) # - shape (batch_size, t, key_dim)
+        values = self.value_transform(y_all) # - shape (batch_size, t, value_dim)
 
         scaling = self.key_dim ** (0.5)
         query = query / scaling
@@ -123,10 +123,10 @@ class SelfAttention(nn.Module):
         # Remember to divide raw attention scores by scaling factor
         # These scores should then be normalized using softmax
         # Hint: use torch.softmax
-        weights = ...
+        weights = torch.softmax(query @ keys.transpose(1,2), dim=2) # - shape (batch_size, 1, t)
 
         # TODO: Compute weighted sum of values based on attention weights
-        output_state = ...
+        output_state = (weights @ values) # - shape (batch_size, 1, value_dim)
 
         # Apply output projection back to hidden dimension
         output_state = self.output_transform(output_state).squeeze(1)
@@ -152,11 +152,13 @@ class SelfAttention(nn.Module):
             # TODO: Perform a step of SelfAttention and unsqueeze the result,
             # Then add it to the output states
             # HINT: use self.step()
-            output_state = ...
+            seq = y_all[:, :i+1, :]
+            # - shape (batch_size, hidden_dim)
+            output_states.append(self.step(seq).unsqueeze(1))
 
         # TODO: torch.cat() all of the outputs in the list
         # across the sequence length dimension (t)
-        output_states = ...
+        output_states = torch.cat(output_states, 1)
 
         return output_states
 
@@ -176,12 +178,12 @@ class RNN(nn.Module):
         self.hidden_dim = hidden_dim
 
         # TODO: Initialie the RNNCell Class
-        self.cell = ...
+        self.cell = RNNCell(input_dim, hidden_dim)
 
         # TODO: Initialize the weights
-        self.out = ...
+        self.out = nn.Linear(hidden_dim, hidden_dim)
 
-    def step(self, input: Tensor, hidden_prev: Optional[Tensor] = None) -> Tensor:
+    def step(self, input: Tensor, hidden_prev: Optional[Tensor] = None) -> tuple[Tensor, Tensor]:
         """
         Compute hidden and output states for a single timestep
 
@@ -206,18 +208,18 @@ class RNN(nn.Module):
             # create a dummy hidden state of all zeros
 
             # TODO: Fill this in (After you intialize, make sure you add .to(input))
-            last_hidden_state = ...
+            last_hidden_state = torch.zeros(input.shape[0], self.hidden_dim).to(input)
         else:
             # TODO: fill this in
-            last_hidden_state = ...
+            last_hidden_state = hidden_prev[:, -1, :]
 
         # Call the RNN cell and apply the transform to get a prediction
-        next_hidden_state = ...
+        next_hidden_state = self.cell.forward(input, last_hidden_state) # type: ignore
         next_output_state = self.out(next_hidden_state)
 
         return next_hidden_state, next_output_state
 
-    def forward(self, sequence: Tensor) -> Tensor:
+    def forward(self, sequence: Tensor) -> tuple[Tensor, Tensor]:
         """
         Compute hidden and output states for all timesteps over input sequence
 
@@ -237,23 +239,29 @@ class RNN(nn.Module):
 
         for i in range(t):
             # TODO: Extract the current input
-            inp = ...
+            inp = sequence[:, i, :] # - shape (batch_size, 1, input_dim)
 
             # TODO: Call step() to get the next hidden/output states
-            next_hidden_state, next_output_state = ...
+            # next_hidden_state: (batch_size, hidden_dim,)
+            # next_output_state: (batch_size, hidden_dim,)
+            next_hidden_state, next_output_state = self.step(inp, hidden_states)
+            
+            # next_hidden_state: (batch_size, 1, hidden_dim)
             next_hidden_state = next_hidden_state.unsqueeze(1)
 
             # TODO: Concatenate the newest hidden state to to all previous ones
             if hidden_states is None:
-                hidden_states = ...
+                hidden_states = next_hidden_state
             else:
-                hidden_states = ...
+                hidden_states = torch.cat((hidden_states, next_hidden_state), dim=1)
 
             # TODO: Append the next output state to the list
+            output_states.append(next_output_state)
 
         # TODO: torch.stack all of the output states over the timestep dim
-        output_states = ...
+        output_states = torch.stack(output_states, dim=1)
 
+        assert hidden_states is not None
         return hidden_states, output_states
 
 
@@ -274,18 +282,19 @@ class RNNLanguageModel(nn.Module):
         super(RNNLanguageModel, self).__init__()
 
         # TODO: Initialize word embeddings (HINT: use nn.Embedding)
-        self.embeddings = ...
+        self.vocab_size = vocab_size
+        self.embeddings = nn.Embedding(vocab_size, embed_dim)
 
         # TODO: RNN backbone
-        self.rnn = ...
+        self.rnn = RNN(embed_dim, hidden_dim)
 
         # TODO: Self Attention Layer
-        self.attention = ...
+        self.attention = SelfAttention(hidden_dim, key_dim, value_dim)
 
         # TODO: Final projection from RNN output state to next token logits
-        self.lm_head = ...
+        self.lm_head = nn.Linear(hidden_dim, vocab_size)
 
-    def forward(self, tokens: Tensor) -> Tensor:
+    def forward(self, tokens: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """
         Computes next-token logits and hidden states for each token in tokens
 
@@ -303,9 +312,18 @@ class RNNLanguageModel(nn.Module):
         """
         # TODO: Apply embeddings, rnns, and lm_head sequentially
 
-        raise NotImplementedError
+        sequences = self.embeddings(tokens)
+        # -> (batch_size, t, embed_dim)
+        hidden_states, rnn_output_states = self.rnn.forward(sequences)
+        # -> (batch_size, t, hidden_dim), (batch_size, t, hidden_dim), 
+        attention_output_states = self.attention.forward(rnn_output_states)
+        # -> (batch_size, t, hidden_dim)
+        lm_head_output_states = self.lm_head.forward(attention_output_states)
+        # -> (batch_size, t, vocab_size)
 
-    def select_token(self, token_logits: Tensor, temperature: float) -> int:
+        return lm_head_output_states, hidden_states, rnn_output_states
+
+    def select_token(self, token_logits: Tensor, temperature: float) -> Tensor:
         """
         Selects (or samples) next token from token_logits
 
@@ -315,7 +333,7 @@ class RNNLanguageModel(nn.Module):
             temperature (float): Sampling temperature. If 0, do greedy decoding.
 
         Returns:
-            index (int): ID of next token selected
+            index (Tensor): ID of next token selected
         """
         if temperature == 0:
             # Greedy Decoding
@@ -387,7 +405,7 @@ class RNNLanguageModel(nn.Module):
         return torch.tensor(new_tokens)
 
 
-def train(lm, train_data, valid_data, loss_fn, optimizer, num_sequences, batch_size):
+def train(lm: RNNLanguageModel, train_data: list[Tensor], valid_data: list[Tensor], loss_fn: nn.CrossEntropyLoss, optimizer, num_sequences: int, batch_size: int):
     """
     Run one epoch of language model training
 
@@ -434,9 +452,13 @@ def train(lm, train_data, valid_data, loss_fn, optimizer, num_sequences, batch_s
             break
 
         # TODO: Zero gradients
+        optimizer.zero_grad()
 
         # TODO: Forward pass through model
-        token_logits, hidden_states, attn_inputs = ...
+        token_logits, _, _ = lm(sequence)
+        # - token_logits: (batch_size, t, vocab_size)
+        # token_logits are the prediction
+        # and the sequence is the true one, but in shape (batch_size, t)
 
         # TODO: Compute next-token classification loss
 
@@ -444,18 +466,26 @@ def train(lm, train_data, valid_data, loss_fn, optimizer, num_sequences, batch_s
         # and the sequence should be of shape (batch_size, t).
         # If we want to compute the loss of the nth logit token,
         # which token in the sequence should I compare it with?
+        # nth logit token is to be compared with (n+1)th in sequence
 
         # Hint 2: We will need to permute the token_logits to the
         # correct shape before passing into loss function
-
-        loss = ...
+        predict_logit = token_logits[:, :-1, :]
+        predict_logit = predict_logit.reshape(-1, predict_logit.shape[-1])
+        # - shape: (batch_size * t-1, vocab_size)
+        true_logit = sequence[:, 1:].reshape(-1)
+        # - shape: (batch_size * t-1, )
+        
+        loss = loss_fn(predict_logit, true_logit)
 
         # TODO: Backward pass through model
+        loss.backward()
 
         # DO NOT change this - clip gradient norm to avoid exploding gradients
         nn.utils.clip_grad_norm_(lm.parameters(), max_grad_norm)
 
         # TODO: Update weights
+        optimizer.step()
 
         # DO NOT change any of the code below
         train_batch_loss += loss.detach().cpu().item()
@@ -508,10 +538,16 @@ def validate(lm, dataset, loss_fn):
             sequence = sequence.to(device)
 
             # TODO: Perform forward pass through the model
-            token_dists, _, _ = ...
+            token_dists, _, _ = lm(sequence)
 
             # TODO: Compute loss (Same as in train)
-            loss = ...
+            predict_logit = token_dists[:, :-1, :]
+            predict_logit = predict_logit.reshape(-1, predict_logit.shape[-1])
+            # - shape: (batch_size * t-1, vocab_size)
+            true_logit = sequence[:, 1:].reshape(-1)
+            # - shape: (batch_size * t-1, )
+            
+            loss = loss_fn(predict_logit, true_logit)
 
             # DO NOT change this line
             mean_loss += loss.detach().cpu().item()
